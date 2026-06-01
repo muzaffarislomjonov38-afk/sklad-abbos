@@ -1,1 +1,12 @@
-
+{
+  "name": "salesnilpak-netlify-site",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mini Sales Doctor static app with Netlify Blobs persistence.",
+  "scripts": {
+    "test": "node --check netlify/functions/sales-data.js"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^8.2.0"
+  }
+}
