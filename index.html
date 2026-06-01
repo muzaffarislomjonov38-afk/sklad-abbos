@@ -1,15 +1,572 @@
-<!DOCTYPE html>
-<html lang="uz">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="refresh" content="0; url=./salesnilpak_work.html">
-<title>Mini Sales Doctor</title>
-</head>
-<body>
-<script>
-window.location.replace('./salesnilpak_work.html');
-</script>
-<a href="./salesnilpak_work.html">Mini Sales Doctorni ochish</a>
-</body>
-</html>
+diff --git a/salesnilpak_work.html b/salesnilpak_work.html
+index 9a87f93baa53a49114fa293a7218fd9e78aab7b8..b11638ecbe69ead4afc4723f942bfe4be4af7fc3 100644
+--- a/salesnilpak_work.html
++++ b/salesnilpak_work.html
+@@ -1496,83 +1496,101 @@ body.sidebar-open {
+             <thead>
+                 <tr>
+                     <th>#</th>
+                     <th>Login</th>
+                     <th>Holati</th>
+                     <th>Amallar</th>
+                 </tr>
+             </thead>
+             <tbody></tbody>
+         </table>
+     </div>
+ </div>
+ <datalist id="customerOptionsList"></datalist>
+ 
+ <script src="./firebase-config.js"></script>
+ <script>
+ window.SALESNILPAK_FIREBASE_CONFIG = window.SALESNILPAK_FIREBASE_CONFIG || {
+     apiKey: "",
+     authDomain: "",
+     projectId: "",
+     storageBucket: "",
+     messagingSenderId: "",
+     appId: ""
+ };
+ window.SALESNILPAK_FIREBASE_DOC = window.SALESNILPAK_FIREBASE_DOC || "salesnilpak/default";
++window.SALESNILPAK_NETLIFY_CONFIG = window.SALESNILPAK_NETLIFY_CONFIG || {
++    endpoint: "/.netlify/functions/sales-data",
++    token: ""
++};
+ </script>
+ <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+ <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+ <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+ <script>
+ const STORAGE_NAMESPACE = 'salesnilpak_work.v2';
+ const STORAGE_MIGRATION_DONE_KEY = `${STORAGE_NAMESPACE}.__migrated__`;
+ const APP_STORAGE_KEYS = [
+     'customers',
+     'products',
+     'sales',
+     'cashEntries',
+     'openingBalances',
+     'openingSummary',
+     'customerRetroBonuses',
+     'customerRetroBonusEntries',
+     'marginWithdrawals',
+     'pricePresets',
+     'accounts',
+     'currentUser',
+     'orderSequence',
+     'appSettings',
+     'customerDefaultsSeeded'
+ ];
+ const FIREBASE_SHARED_STORAGE_KEYS = APP_STORAGE_KEYS.filter(key => key !== 'currentUser');
+ const FIREBASE_CONFIG = window.SALESNILPAK_FIREBASE_CONFIG || {};
+ const FIREBASE_DOC_PATH = window.SALESNILPAK_FIREBASE_DOC || 'salesnilpak/default';
+ const FIREBASE_SAVE_DEBOUNCE_MS = 800;
++const NETLIFY_CONFIG = window.SALESNILPAK_NETLIFY_CONFIG || {};
++const NETLIFY_SYNC_ENDPOINT = String(NETLIFY_CONFIG.endpoint || '/.netlify/functions/sales-data').trim();
++const NETLIFY_SYNC_TOKEN = String(NETLIFY_CONFIG.token || '').trim();
++const NETLIFY_SAVE_DEBOUNCE_MS = 800;
++const NETLIFY_PULL_INTERVAL_MS = 15000;
+ let firebaseDb = null;
+ let firebaseDocRef = null;
+ let firebaseSaveTimer = null;
+ let firebaseApplyingRemoteData = false;
+ let firebaseInitialSnapshotHandled = false;
++let netlifySaveTimer = null;
++let netlifyPullTimer = null;
++let netlifySyncEnabled = false;
++let netlifyApplyingRemoteData = false;
++let netlifyInitialLoadHandled = false;
++let netlifyInitialLoadPromise = null;
++let netlifyLocalDirty = false;
++let netlifySaveInFlight = false;
++let netlifyLastRemoteStamp = '';
+ 
+ function getScopedStorageKey(key) {
+     return `${STORAGE_NAMESPACE}.${key}`;
+ }
+ 
+ function migrateLegacyStorage() {
+     try {
+         if (localStorage.getItem(STORAGE_MIGRATION_DONE_KEY) === '1') return;
+         APP_STORAGE_KEYS.forEach(key => {
+             const scopedKey = getScopedStorageKey(key);
+             if (localStorage.getItem(scopedKey) !== null) return;
+             const legacyValue = localStorage.getItem(key);
+             if (legacyValue !== null) {
+                 localStorage.setItem(scopedKey, legacyValue);
+             }
+         });
+         localStorage.setItem(STORAGE_MIGRATION_DONE_KEY, '1');
+     } catch (error) {
+         console.error("Storage migratsiyasida xato:", error);
+     }
+ }
+ 
+ function storageGetItem(key, fallback = null) {
+     try {
+         const value = localStorage.getItem(getScopedStorageKey(key));
+@@ -1655,106 +1673,229 @@ function saveSharedDataToLocalStorage() {
+     savePricePresets();
+     saveAccounts();
+     storageSetItem('orderSequence', String(orderSequence));
+ }
+ 
+ function applySharedAppData(data) {
+     if (!data || typeof data !== 'object') return false;
+     if (Array.isArray(data.customers)) customers = data.customers;
+     if (Array.isArray(data.products)) products = data.products;
+     if (Array.isArray(data.sales)) sales = data.sales;
+     if (Array.isArray(data.cashEntries)) cashEntries = data.cashEntries;
+     if (Array.isArray(data.openingBalances)) openingBalances = data.openingBalances;
+     if (data.openingSummary && typeof data.openingSummary === 'object' && !Array.isArray(data.openingSummary)) openingSummary = data.openingSummary;
+     if (data.customerRetroBonuses && typeof data.customerRetroBonuses === 'object' && !Array.isArray(data.customerRetroBonuses)) customerRetroBonuses = data.customerRetroBonuses;
+     if (Array.isArray(data.customerRetroBonusEntries)) customerRetroBonusEntries = data.customerRetroBonusEntries;
+     if (Array.isArray(data.marginWithdrawals)) marginWithdrawals = data.marginWithdrawals;
+     if (Array.isArray(data.pricePresets)) pricePresets = data.pricePresets;
+     if (Array.isArray(data.accounts)) accounts = data.accounts;
+     if (Number.isFinite(Number(data.orderSequence))) orderSequence = Number(data.orderSequence);
+     if (data.customerDefaultsSeeded !== undefined) {
+         storageSetItem(CUSTOMER_DEFAULTS_SEEDED_KEY, String(data.customerDefaultsSeeded));
+     }
+     return true;
+ }
+ 
++function applyRemoteSharedAppData(data) {
++    const applied = applySharedAppData(data);
++    if (!applied) return false;
++    normalizeProducts();
++    normalizeExistingRecords();
++    normalizePricePresets();
++    normalizeOpeningBalances();
++    normalizeOpeningSummary();
++    normalizeCustomerRetroBonuses();
++    normalizeCustomerRetroBonusEntries();
++    normalizeMarginWithdrawals();
++    mergeDefaultCustomers();
++    normalizeAccounts();
++    saveSharedDataToLocalStorage();
++    renderAll();
++    return true;
++}
++
++function scheduleCloudDataSave(forceNow = false) {
++    scheduleFirebaseSave(forceNow);
++    scheduleNetlifySave(forceNow);
++}
++
+ function scheduleFirebaseSave(forceNow = false) {
+     if (!firebaseDocRef || firebaseApplyingRemoteData) return;
+     clearTimeout(firebaseSaveTimer);
+     const saveToCloud = () => {
+         if (!firebaseDocRef) return;
+         firebaseDocRef.set(collectSharedAppData(), { merge: true }).catch(error => {
+             console.warn('Firebase saqlashda xato:', error);
+         });
+     };
+     if (forceNow) {
+         saveToCloud();
+     } else {
+         firebaseSaveTimer = setTimeout(saveToCloud, FIREBASE_SAVE_DEBOUNCE_MS);
+     }
+ }
+ 
++function getNetlifySyncHeaders() {
++    const headers = { 'Content-Type': 'application/json' };
++    if (NETLIFY_SYNC_TOKEN) headers['x-salesnilpak-sync-token'] = NETLIFY_SYNC_TOKEN;
++    return headers;
++}
++
++function hasUsableNetlifySync() {
++    return Boolean(NETLIFY_SYNC_ENDPOINT);
++}
++
++function getNetlifyDataStamp(data) {
++    if (!data || typeof data !== 'object') return '';
++    return String(data.serverUpdatedAt || data.updatedAt || '');
++}
++
++async function fetchNetlifySharedData() {
++    const response = await fetch(NETLIFY_SYNC_ENDPOINT, {
++        method: 'GET',
++        headers: getNetlifySyncHeaders(),
++        cache: 'no-store'
++    });
++    if (!response.ok) throw new Error(`HTTP ${response.status}`);
++    const result = await response.json();
++    return result && result.data && typeof result.data === 'object' ? result.data : {};
++}
++
++function applyNetlifyRemoteData(remoteData, force = false) {
++    if (!remoteData || !Object.keys(remoteData).length) return false;
++    const remoteStamp = getNetlifyDataStamp(remoteData);
++    if (!force && remoteStamp && remoteStamp === netlifyLastRemoteStamp) return false;
++    if (netlifyLocalDirty || netlifySaveInFlight) return false;
++
++    netlifyApplyingRemoteData = true;
++    try {
++        const applied = applyRemoteSharedAppData(remoteData);
++        if (applied) netlifyLastRemoteStamp = remoteStamp || new Date().toISOString();
++        return applied;
++    } finally {
++        netlifyApplyingRemoteData = false;
++    }
++}
++
++async function pullNetlifyUpdates() {
++    if (!netlifySyncEnabled || netlifyApplyingRemoteData || netlifyLocalDirty || netlifySaveInFlight) return;
++    try {
++        const remoteData = await fetchNetlifySharedData();
++        applyNetlifyRemoteData(remoteData);
++    } catch (error) {
++        console.warn('Netlify bazadan yangiliklarni o‘qishda xato:', error);
++    }
++}
++
++function startNetlifyPolling() {
++    if (netlifyPullTimer) return;
++    netlifyPullTimer = setInterval(pullNetlifyUpdates, NETLIFY_PULL_INTERVAL_MS);
++}
++
++function scheduleNetlifySave(forceNow = false) {
++    if (!netlifySyncEnabled || netlifyApplyingRemoteData) return;
++    netlifyLocalDirty = true;
++    clearTimeout(netlifySaveTimer);
++    const saveToNetlify = async () => {
++        if (!netlifySyncEnabled) return;
++        const payload = collectSharedAppData();
++        netlifySaveInFlight = true;
++        try {
++            const response = await fetch(NETLIFY_SYNC_ENDPOINT, {
++                method: 'POST',
++                headers: getNetlifySyncHeaders(),
++                body: JSON.stringify(payload)
++            });
++            if (!response.ok) throw new Error(`HTTP ${response.status}`);
++            const result = await response.json().catch(() => ({}));
++            const savedData = result && result.data && typeof result.data === 'object' ? result.data : payload;
++            netlifyLastRemoteStamp = getNetlifyDataStamp(savedData) || payload.updatedAt || new Date().toISOString();
++            netlifyLocalDirty = false;
++        } catch (error) {
++            console.warn('Netlify bazaga saqlashda xato:', error);
++            netlifySaveTimer = setTimeout(saveToNetlify, NETLIFY_PULL_INTERVAL_MS);
++        } finally {
++            netlifySaveInFlight = false;
++        }
++    };
++    if (forceNow) {
++        saveToNetlify();
++    } else {
++        netlifySaveTimer = setTimeout(saveToNetlify, NETLIFY_SAVE_DEBOUNCE_MS);
++    }
++}
++
++async function initializeNetlifySync() {
++    if (!hasUsableNetlifySync()) {
++        console.info('Netlify sync faqat Netlify deployda yoki to‘liq endpoint URL berilganda ishlaydi.');
++        return;
++    }
++
++    try {
++        const remoteData = await fetchNetlifySharedData();
++        netlifySyncEnabled = true;
++        if (remoteData && Object.keys(remoteData).length) {
++            applyNetlifyRemoteData(remoteData, true);
++        } else {
++            scheduleNetlifySave(true);
++        }
++        startNetlifyPolling();
++    } catch (error) {
++        console.warn('Netlify sync ishga tushmadi. Dastur localStorage bilan ishlayapti:', error);
++    } finally {
++        netlifyInitialLoadHandled = true;
++    }
++}
++
+ async function initializeFirebaseSync() {
+     if (!hasUsableFirebaseConfig()) {
+         console.info('Firebase config kiritilmagan. Dastur localStorage bilan ishlayapti.');
+         return;
+     }
+ 
+     try {
+         if (!firebase.apps.length) {
+             firebase.initializeApp(FIREBASE_CONFIG);
+         }
+         if (firebase.auth) {
+             await firebase.auth().signInAnonymously().catch(error => {
+                 console.warn('Firebase anonymous auth ishlamadi:', error);
+             });
+         }
+         firebaseDb = firebase.firestore();
+         await firebaseDb.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+         firebaseDocRef = firebaseDb.doc(FIREBASE_DOC_PATH);
+         firebaseDocRef.onSnapshot(snapshot => {
+             if (!snapshot.exists) {
+                 if (!firebaseInitialSnapshotHandled) scheduleFirebaseSave(true);
+                 firebaseInitialSnapshotHandled = true;
+                 return;
+             }
+ 
+             firebaseApplyingRemoteData = true;
+             try {
+-                applySharedAppData(snapshot.data());
+-                normalizeProducts();
+-                normalizeExistingRecords();
+-                normalizePricePresets();
+-                normalizeOpeningBalances();
+-                normalizeOpeningSummary();
+-                normalizeCustomerRetroBonuses();
+-                normalizeCustomerRetroBonusEntries();
+-                normalizeMarginWithdrawals();
+-                mergeDefaultCustomers();
+-                normalizeAccounts();
+-                saveSharedDataToLocalStorage();
+-                renderAll();
++                applyRemoteSharedAppData(snapshot.data());
+             } finally {
+                 firebaseApplyingRemoteData = false;
+                 firebaseInitialSnapshotHandled = true;
+             }
+         }, error => {
+             console.warn('Firebase oqimini o‘qishda xato:', error);
+         });
+     } catch (error) {
+         console.warn('Firebase ishga tushmadi:', error);
+     }
+ }
+ 
+ migrateLegacyStorage();
+ 
+ let customers = safeGetJSON('customers', []);
+ let products = safeGetJSON('products', []);
+ let sales = safeGetJSON('sales', []);
+ let cashEntries = safeGetJSON('cashEntries', []);
+ let openingBalances = safeGetJSON('openingBalances', []);
+ let openingSummary = safeGetJSON('openingSummary', { date: '', margin: 0, factoryTotal: 0, factoryDebtTotal: 0 });
+ let customerRetroBonuses = safeGetJSON('customerRetroBonuses', {});
+ let customerRetroBonusEntries = safeGetJSON('customerRetroBonusEntries', []);
+ let marginWithdrawals = safeGetJSON('marginWithdrawals', []);
+ let pricePresets = safeGetJSON('pricePresets', []);
+ let accounts = safeGetJSON('accounts', []);
+@@ -4323,146 +4464,162 @@ function isAdminUser() {
+     return Boolean(getCurrentAccount()?.isRoot);
+ }
+ 
+ function updateAuthUI() {
+     const isLoggedIn = Boolean(currentUser);
+     const loginScreen = document.getElementById('loginScreen');
+     const sidebar = document.getElementById('appSidebar');
+     const main = document.querySelector('.main');
+     const mobileTopbar = document.getElementById('mobileTopbar');
+     if (loginScreen) loginScreen.style.display = isLoggedIn ? 'none' : 'flex';
+     if (sidebar) sidebar.style.display = isLoggedIn ? 'block' : 'none';
+     if (main) main.style.display = isLoggedIn ? 'block' : 'none';
+     if (mobileTopbar) mobileTopbar.style.display = isLoggedIn ? '' : 'none';
+     if (!isLoggedIn) closeSidebar();
+     safeExecute('renderSidebarMenuButtons', () => renderSidebarMenuButtons());
+     safeExecute('renderSidebarProfile', () => renderSidebarProfile());
+     safeExecute('renderMobileHeader', () => renderMobileHeader());
+     safeExecute('applyAppAppearance', () => applyAppAppearance());
+ 
+     const teamCreateForm = document.getElementById('teamCreateForm');
+     const teamAdminNotice = document.getElementById('teamAdminNotice');
+     if (teamCreateForm) teamCreateForm.style.display = isAdminUser() ? 'grid' : 'none';
+     if (teamAdminNotice) teamAdminNotice.style.display = isAdminUser() ? 'none' : 'block';
+ }
+ 
+-function login() {
++async function login() {
++    if (netlifyInitialLoadPromise && !netlifyInitialLoadHandled) {
++        await netlifyInitialLoadPromise.catch(() => {});
++    }
++
+     const loginValue = document.getElementById('loginUsername').value.trim();
+     const passwordValue = document.getElementById('loginPassword').value;
+     if (!loginValue || !passwordValue) return alert("Login va parolni kiriting!");
+ 
+     const matchedAccount = accounts.find(account => account.login === loginValue && account.password === passwordValue);
+     if (!matchedAccount) return alert("Login yoki parol noto'g'ri!");
+ 
+     currentUser = matchedAccount.login;
+     storageSetItem('currentUser', currentUser);
+     document.getElementById('loginUsername').value = "";
+     document.getElementById('loginPassword').value = "";
+     updateAuthUI();
+     showSection('dashboard');
+ }
+ 
+ function logout() {
+     currentUser = '';
+     storageRemoveItem('currentUser');
+     closeSidebar();
+     updateAuthUI();
+ }
+ 
+ function showSection(id) {
+     if (!currentUser) return;
+     if (!canViewSection(id)) {
+         alert("Bu bo'limni ko'rish uchun ruxsat yo'q.");
+         return;
+     }
+     if (!document.getElementById(id)) return;
+     if (id === 'sales') {
+         document.getElementById('salesStartDate').value = "";
+         document.getElementById('salesEndDate').value = "";
+         document.getElementById('salesPreset').value = 'all';
+         syncAppliedDateFilter('sales');
+     }
+     currentSectionId = id;
+     document.querySelectorAll('.section').forEach(section => section.style.display = 'none');
+     document.getElementById(id).style.display = 'block';
+     closeSidebar();
+     renderAll();
+ }
+ 
+ function saveCustomers() {
+     storageSetItem('customers', JSON.stringify(customers));
++    scheduleCloudDataSave();
+ }
+ 
+ function saveProducts() {
+     storageSetItem('products', JSON.stringify(products));
++    scheduleCloudDataSave();
+ }
+ 
+ function saveSales() {
+     storageSetItem('sales', JSON.stringify(sales));
++    scheduleCloudDataSave();
+ }
+ 
+ function getNextOrderNo() {
+     orderSequence += 1;
+     storageSetItem('orderSequence', String(orderSequence));
++    scheduleCloudDataSave();
+     return `ZK-${String(orderSequence).padStart(4, '0')}`;
+ }
+ 
+ function saveCashEntries() {
+     storageSetItem('cashEntries', JSON.stringify(cashEntries));
++    scheduleCloudDataSave();
+ }
+ 
+ function saveOpeningBalances() {
+     storageSetItem('openingBalances', JSON.stringify(openingBalances));
++    scheduleCloudDataSave();
+ }
+ 
+ function saveOpeningSummary() {
+     storageSetItem('openingSummary', JSON.stringify(openingSummary));
++    scheduleCloudDataSave();
+ }
+ 
+ function saveCustomerRetroBonuses() {
+     storageSetItem('customerRetroBonuses', JSON.stringify(customerRetroBonuses));
++    scheduleCloudDataSave();
+ }
+ 
+ function saveCustomerRetroBonusEntries() {
+     storageSetItem('customerRetroBonusEntries', JSON.stringify(customerRetroBonusEntries));
++    scheduleCloudDataSave();
+ }
+ 
+ function saveMarginWithdrawals() {
+     storageSetItem('marginWithdrawals', JSON.stringify(marginWithdrawals));
++    scheduleCloudDataSave();
+ }
+ 
+ function savePricePresets() {
+     storageSetItem('pricePresets', JSON.stringify(pricePresets));
++    scheduleCloudDataSave();
+ }
+ 
+ function saveAccounts() {
+     storageSetItem('accounts', JSON.stringify(accounts));
++    scheduleCloudDataSave();
+ }
+ 
+ function persistAndRender() {
+     saveSharedDataToLocalStorage();
+-    scheduleFirebaseSave();
++    scheduleCloudDataSave();
+     renderAll();
+ }
+ 
+ function addAccount() {
+     if (!isAdminUser()) return alert("Faqat Admin yangi account ochishi mumkin!");
+ 
+     const loginValue = document.getElementById('newAccountLogin').value.trim();
+     const passwordValue = document.getElementById('newAccountPassword').value;
+     if (!loginValue || !passwordValue) return alert("Login va parolni kiriting!");
+     if (accounts.some(account => account.login.toLowerCase() === loginValue.toLowerCase())) {
+         return alert("Bu login allaqachon mavjud!");
+     }
+ 
+     accounts.push({
+         login: loginValue,
+         password: passwordValue,
+         displayName: loginValue,
+         avatar: '',
+         isRoot: false
+     });
+     document.getElementById('newAccountLogin').value = "";
+     document.getElementById('newAccountPassword').value = "";
+     persistAndRender();
+ }
+ 
+@@ -6739,37 +6896,52 @@ function renderAll() {
+     safeExecute('renderCashSection', () => renderCashSection());
+     safeExecute('renderMarginSection', () => renderMarginSection());
+     safeExecute('renderDebt', () => renderDebt());
+     safeExecute('renderDashboard', () => renderDashboard());
+     safeExecute('renderReports', () => renderReports());
+     safeExecute('applySectionAccessStates', () => applySectionAccessStates());
+ }
+ 
+ mergeDefaultProducts();
+ removeDeprecatedDefaultProducts();
+ trimProductsToLimit();
+ normalizeProducts();
+ renameProductsToRussian();
+ normalizeExistingRecords();
+ normalizePricePresets();
+ normalizeOpeningBalances();
+ normalizeOpeningSummary();
+ normalizeCustomerRetroBonuses();
+ normalizeCustomerRetroBonusEntries();
+ normalizeMarginWithdrawals();
+ mergeDefaultCustomers();
+ normalizeAppSettings();
+ normalizeAccounts();
+ resetDateInputs();
+ clearOrderDraft();
+-updateAuthUI();
++
++function renderInitialAppAfterCloudLoad() {
++    updateAuthUI();
++    if (currentUser) {
++        showSection('dashboard');
++    } else {
++        renderAll();
++    }
++}
++
++netlifyInitialLoadPromise = initializeNetlifySync();
++initializeFirebaseSync();
++
+ if (currentUser) {
+-    showSection('dashboard');
++    netlifyInitialLoadPromise.finally(renderInitialAppAfterCloudLoad);
+ } else {
+-    renderAll();
++    renderInitialAppAfterCloudLoad();
+ }
+-initializeFirebaseSync();
+-window.addEventListener('online', () => scheduleFirebaseSave(true));
++
++window.addEventListener('online', () => {
++    pullNetlifyUpdates();
++    scheduleCloudDataSave(true);
++});
+ </script>
+ 
+ </body>
+ </html>
