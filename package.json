@@ -1,0 +1,18 @@
+diff --git a/package.json b/package.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..ff3779f45b50b6a8c91282c317916cf83a79196d
+--- /dev/null
++++ b/package.json
+@@ -0,0 +1,12 @@
++{
++  "name": "salesnilpak-netlify-site",
++  "version": "1.0.0",
++  "private": true,
++  "description": "Mini Sales Doctor static app with Netlify Blobs persistence.",
++  "scripts": {
++    "test": "node --check netlify/functions/sales-data.js"
++  },
++  "dependencies": {
++    "@netlify/blobs": "^8.2.0"
++  }
++}
